@@ -202,16 +202,37 @@ namespace CudaPlusPlus {
     };
 
     template<typename T>
+    class CudaValue : public CudaMemory {
+        T *ptr;
+    public:
+        explicit CudaValue(T val) {
+            ptr = new T;
+            *ptr = val;
+        }
+
+        void *getRaw() override {
+            return ptr;
+        }
+
+        T &operator*() {
+            return ptr;
+        }
+
+        ~CudaValue() {
+            delete ptr;
+        }
+    };
+
+    template<typename T>
     class CudaHostMemory : public CudaMemory {
         T *ptr;
-
+    public:
         explicit CudaHostMemory(int size) {
             CudaException::tryCuda(cuMemAllocHost((void **) &ptr, size * sizeof(T)));
         }
 
-    public:
         void *getRaw() override {
-            return ptr;
+            return &ptr;
         }
 
         T *data() {
