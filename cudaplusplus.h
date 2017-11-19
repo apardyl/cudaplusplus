@@ -211,7 +211,7 @@ namespace CudaPlusPlus {
 
     public:
         void *getRaw() override {
-            return &ptr;
+            return ptr;
         }
 
         T *data() {
