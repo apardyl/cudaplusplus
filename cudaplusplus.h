@@ -312,28 +312,30 @@ namespace CudaPlusPlus {
 
     typedef std::array<unsigned, 3> CudaDimensions;
 
-//    class CudaKernelArgs {
-//    private:
-//        void **arg = nullptr;
-//    public:
-//        ~CudaKernelArgs() {
-//            delete arg;
-//        }
-//
-//        CudaKernelArgs(std::list<CudaMemory&> args) {
-//            arg = new void *[args.size()];
-//            int i = 0;
-//            for (auto &a : args) {
-//                arg[i++] = a.getRaw();
-//            }
-//        }
-//
-//        explicit CudaKernelArgs(void **args) {
-//            arg = args;
-//        }
-//
-//        friend class CudaKernel;
-//    };
+    class CudaKernelArgs {
+    private:
+        void **argsPtr = nullptr;
+    public:
+        ~CudaKernelArgs() {
+            delete argsPtr;
+        }
+
+        CudaKernelArgs(std::initializer_list<CudaMemory *> args) {
+            argsPtr = new void *[args.size()];
+            int i = 0;
+            for (auto &a : args) {
+                argsPtr[i++] = a->getRaw();
+            }
+        }
+
+        explicit CudaKernelArgs(void **args) {
+            argsPtr = args;
+        }
+
+        void **getArgs() {
+            return argsPtr;
+        }
+    };
 
     struct CudaKernelExtraArgs {
         unsigned sharedBytes = 0;
@@ -354,12 +356,12 @@ namespace CudaPlusPlus {
         }
 
     public:
-        void launch(CudaDimensions grid, CudaDimensions block, void **args,
+        void launch(CudaDimensions grid, CudaDimensions block, CudaKernelArgs args,
                     CudaKernelExtraArgs extraArgs = CudaKernelExtraArgs::getDefaultInstance()) {
             CudaException::tryCuda(
                     cuLaunchKernel(kernel, grid[0], grid[1], grid[2], block[0], block[1], block[2],
                                    extraArgs.sharedBytes,
-                                   extraArgs.hStream, args, extraArgs.extra));
+                                   extraArgs.hStream, args.getArgs(), extraArgs.extra));
         }
 
         friend class CudaModule;
