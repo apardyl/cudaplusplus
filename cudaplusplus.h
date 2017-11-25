@@ -5,7 +5,7 @@
 #include <array>
 #include <random>
 
-namespace CudaPlusPlus {
+namespace cudaplusplus {
     /*!
      * @class CudaException
      * @brief Wraps CUresult in an exception.
@@ -183,11 +183,11 @@ namespace CudaPlusPlus {
     template<typename T>
     class CudaDeviceMemory : public CudaMemory {
         CUdeviceptr ptr = 0;
-        int sizee = 0;
+        int size = 0;
 
         explicit CudaDeviceMemory(int size) {
             CudaException::tryCuda(cuMemAlloc(&ptr, size * sizeof(T)));
-            sizee = size;
+            this->size = size;
         }
 
     public:
@@ -199,8 +199,8 @@ namespace CudaPlusPlus {
          * @brief Allocates memory on host and copies data from device to it.
          */
         T *copyDeviceHost() {
-            auto *out = new T[sizee];
-            CudaException::tryCuda(cuMemcpyDtoH(out, ptr, sizee * sizeof(T)));
+            auto *out = new T[size];
+            CudaException::tryCuda(cuMemcpyDtoH(out, ptr, size * sizeof(T)));
             return out;
         }
 
@@ -210,8 +210,8 @@ namespace CudaPlusPlus {
          */
         T *copyDeviceHost(int size) {
             auto *out = new T[size];
-            if (size > sizee) {
-                size = sizee;
+            if (size > this->size) {
+                size = this->size;
             }
             CudaException::tryCuda(cuMemcpyDtoH(out, ptr, size * sizeof(T)));
             return out;
@@ -224,7 +224,7 @@ namespace CudaPlusPlus {
          */
         T *copyDeviceHost(T *out, int size = 0) {
             if (size <= 0) {
-                size = sizee;
+                size = this->size;
             }
             CudaException::tryCuda(cuMemcpyDtoH(out, ptr, size * sizeof(T)));
             return out;
@@ -235,7 +235,7 @@ namespace CudaPlusPlus {
          * @param input Source array, must not be smaller than target.
          */
         void copyHostDevice(T *input) {
-            CudaException::tryCuda(cuMemcpyHtoD(ptr, input, sizee * sizeof(T)));
+            CudaException::tryCuda(cuMemcpyHtoD(ptr, input, size * sizeof(T)));
         }
 
         /*!
@@ -244,8 +244,8 @@ namespace CudaPlusPlus {
          * @param size Number of elements to copy.
          */
         void copyHostDevice(T *input, int size) {
-            if (size > sizee) {
-                size = sizee;
+            if (size > this->size) {
+                size = this->size;
             }
             CudaException::tryCuda(cuMemcpyHtoD(ptr, input, size * sizeof(T)));
         }
@@ -580,8 +580,7 @@ namespace CudaPlusPlus {
         CudaDevice getDevice() {
             if (deviceCount == 0) {
                 throw CudaException(CUDA_ERROR_NO_DEVICE);
-            }
-            if (deviceCount == 1) {
+            } else if (deviceCount == 1) {
                 return getDevice(0);
             }
             std::default_random_engine generator;
