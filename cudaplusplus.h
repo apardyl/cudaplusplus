@@ -1,3 +1,12 @@
+/*!
+ * CudaPlusPlus
+ * C++ wrapper for Nvidia CUDA Driver API
+ *
+ * Copyright (c) 2017 Adam Pardyl
+ *
+ * https://github.com/apardyl/cudaplusplus
+ */
+
 #pragma once
 
 #include <cuda.h>
