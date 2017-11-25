@@ -1,18 +1,21 @@
 #pragma once
 
 #include <cuda.h>
-#include <vector>
-#include <list>
 #include <exception>
 #include <array>
+#include <random>
 
 namespace CudaPlusPlus {
+    /*!
+     * @class CudaException
+     * @brief Wraps CUresult in an exception.
+     */
     class CudaException : public std::exception {
     private:
         CUresult errCode;
     public:
-        explicit CudaException(int cudaRes) {
-            errCode = static_cast<CUresult>(cudaRes);
+        explicit CudaException(CUresult cudaRes) {
+            errCode = cudaRes;
         }
 
         const char *what() const noexcept override {
@@ -136,8 +139,19 @@ namespace CudaPlusPlus {
             }
         }
 
+        /*!
+         * Returns raw error code, that caused the exception.
+         */
+        const CUresult errorCode() const noexcept {
+            return errCode;
+        }
+
+        /*!
+         * @brief Throws CudaException if parameter is not equal to CUDA_SUCCESS
+         * @param res Cuda error code
+         */
         static void tryCuda(CUresult res) {
-            if (res == 0) return;
+            if (res == CUDA_SUCCESS) return;
             else throw CudaException(res);
         }
     };
@@ -152,11 +166,20 @@ namespace CudaPlusPlus {
 
     class CudaContext;
 
+    /*!
+     * @class CudaMemory
+     * @brief Abstract class representing allocated memory
+     */
     class CudaMemory {
     public:
         virtual void *getRaw() = 0;
     };
 
+    /*!
+     * @class CudaDeviceMemory
+     * @brief Cuda device memory wrapper
+     * @tparam T array type
+     */
     template<typename T>
     class CudaDeviceMemory : public CudaMemory {
         CUdeviceptr ptr = 0;
@@ -172,25 +195,54 @@ namespace CudaPlusPlus {
             return &ptr;
         }
 
+        /*!
+         * @brief Allocates memory on host and copies data from device to it.
+         */
         T *copyDeviceHost() {
             auto *out = new T[sizee];
             CudaException::tryCuda(cuMemcpyDtoH(out, ptr, sizee * sizeof(T)));
             return out;
         }
 
+        /*!
+         * @brief Allocates memory on host and copies data from device to it.
+         * @param size Size of array to alloc and number of elements to copy.
+         */
         T *copyDeviceHost(int size) {
+            auto *out = new T[size];
             if (size > sizee) {
                 size = sizee;
             }
-            auto *out = new T[size];
             CudaException::tryCuda(cuMemcpyDtoH(out, ptr, size * sizeof(T)));
             return out;
         }
 
+        /*!
+         * @brief Copies data from device to host.
+         * @param out Target array, must be large enough.
+         * @param size Number of elements to copy or 0 (copy all).
+         */
+        T *copyDeviceHost(T *out, int size = 0) {
+            if (size <= 0) {
+                size = sizee;
+            }
+            CudaException::tryCuda(cuMemcpyDtoH(out, ptr, size * sizeof(T)));
+            return out;
+        }
+
+        /*!
+         * @brief Copies array from host to device.
+         * @param input Source array, must not be smaller than target.
+         */
         void copyHostDevice(T *input) {
             CudaException::tryCuda(cuMemcpyHtoD(ptr, input, sizee * sizeof(T)));
         }
 
+        /*!
+         * @brief Copies array from host to device.
+         * @param input Source array.
+         * @param size Number of elements to copy.
+         */
         void copyHostDevice(T *input, int size) {
             if (size > sizee) {
                 size = sizee;
@@ -201,6 +253,11 @@ namespace CudaPlusPlus {
         friend class CudaContext;
     };
 
+    /*!
+     * @class CudaValue
+     * @brief Allows passing a single value to CudaKernel
+     * @tparam T value type
+     */
     template<typename T>
     class CudaValue : public CudaMemory {
         T *ptr;
@@ -223,14 +280,20 @@ namespace CudaPlusPlus {
         }
     };
 
+    /*!
+     * @class CudaHostMemory
+     * @brief Cuda host memory wrapper
+     * @tparam T array type
+     */
     template<typename T>
     class CudaHostMemory : public CudaMemory {
         T *ptr;
-    public:
+
         explicit CudaHostMemory(int size) {
             CudaException::tryCuda(cuMemAllocHost((void **) &ptr, size * sizeof(T)));
         }
 
+    public:
         void *getRaw() override {
             return &ptr;
         }
@@ -242,6 +305,10 @@ namespace CudaPlusPlus {
         friend class CudaContext;
     };
 
+    /*!
+     * @class CudaContext
+     * @brief Cuda context, allows memory management and device synchronisation.
+     */
     class CudaContext {
     private:
         CUcontext context = nullptr;
@@ -254,36 +321,82 @@ namespace CudaPlusPlus {
         }
 
     public:
+        /*!
+         * @brief Allocates device memory in context.
+         * @tparam T Array type
+         * @param size Array size
+         */
         template<typename T>
         CudaDeviceMemory<T> allocDevice(int size) {
             return CudaDeviceMemory<T>(size);
         }
 
+        /*!
+         * @brief Allocates device memory in context, copies data from host.
+         * @tparam T Array type.
+         * @param data Array to copy to device
+         * @param size Array size
+         */
         template<typename T>
         CudaDeviceMemory<T> allocDevice(T *data, int size) {
             CudaDeviceMemory<T> mem(size);
             mem.copyHostDevice(data);
         }
 
+        /*!
+         * @brief Allocates host memory in context.
+         * @tparam T Array type.
+         * @param size Array size.
+         */
         template<typename T>
         CudaHostMemory<T> allocHost(int size) {
             return CudaHostMemory<T>(size);
         }
 
+        /*!
+         * @brief Synchronizes the context.
+         */
         void synchronize() {
             CudaException::tryCuda(cuCtxSynchronize());
         }
 
         ~CudaContext() {
-            if (!preserve) {
+            if (!preserve && context != nullptr) {
                 CudaException::tryCuda(cuCtxDestroy(context));
             }
         }
 
+        /*!
+         * @brief Preserve the context after object destruction
+         * @warning May lead to memory leaks.
+         * @param val set to true iff you want to preserve the context.
+         */
         void setPreserve(bool val) {
             preserve = val;
         }
 
+        /*!
+         * @brief Returns ammount of free memory in context.
+         */
+        size_t getFreeMemory() {
+            size_t free, total;
+            CudaException::tryCuda(cuMemGetInfo(&free, &total));
+            return free;
+        }
+
+        /*!
+         * @brief Returns ammount of memory in context.
+         */
+        size_t getTotalMemory() {
+            size_t free, total;
+            CudaException::tryCuda(cuMemGetInfo(&free, &total));
+            return total;
+        }
+
+        /*!
+         * @brief Wraps existing context in a dummy CudaContext object.
+         * @warning Does not create a cuda context itself, use with caution.
+         */
         static CudaContext getExistingContext() {
             return {};
         }
@@ -292,6 +405,10 @@ namespace CudaPlusPlus {
     };
 
 
+    /*!
+     * @class CudaDevice
+     * @brief Represents a single cuda device.
+     */
     class CudaDevice {
     private:
         CUdevice device = 0;
@@ -301,6 +418,10 @@ namespace CudaPlusPlus {
         }
 
     public:
+        /*!
+         * @brief Creates a new CudaContext.
+         * @param flags Context creation flags.
+         */
         CudaContext createContext(unsigned flags = 0) {
             return CudaContext(device, flags);
         }
@@ -308,31 +429,16 @@ namespace CudaPlusPlus {
         friend class CudaDriver;
     };
 
-    class CudaDriver {
-    private:
-        CudaDriver() = default;
-
-    public:
-        CudaDevice getDevice(int deviceNumber = 0) {
-            return CudaDevice(deviceNumber);
-        }
-
-        static CudaDriver getInstance() {
-            static bool isInitialized;
-            if (!isInitialized) {
-                CudaException::tryCuda(cuInit(0));
-                isInitialized = true;
-            }
-            return {};
-        }
-
-        static CudaDriver getExistingInstance() {
-            return {};
-        }
-    };
-
+    /*!
+    * @class CudaDimensions
+    * @brief 3D dimennsions array { x, y, z }
+    */
     typedef std::array<unsigned, 3> CudaDimensions;
 
+    /*!
+     * @class CudaKernelArgs
+     * @brief Arguments passed to launched CudaKernel.
+     */
     class CudaKernelArgs {
     private:
         void **argsPtr = nullptr;
@@ -341,6 +447,10 @@ namespace CudaPlusPlus {
             delete argsPtr;
         }
 
+        /*!
+         * @brief Recommended constructor.
+         * @param args List of CudaMemory object to pass to kernel.
+         */
         CudaKernelArgs(std::initializer_list<CudaMemory *> args) {
             argsPtr = new void *[args.size()];
             int i = 0;
@@ -349,25 +459,49 @@ namespace CudaPlusPlus {
             }
         }
 
+        /*!
+         * @brief Wraps c-style argument list.
+         * @param args Array of pointers to arguments to pass to kernel.
+         */
         explicit CudaKernelArgs(void **args) {
             argsPtr = args;
         }
 
+        /*!
+         * @brief Returns c-style argument list.
+         */
         void **getArgs() {
             return argsPtr;
         }
     };
 
-    struct CudaKernelExtraArgs {
+    /*!
+     * @class CudaKernelExtraArgs
+     * @brief Additional launch parameters for CudaKernel, usually unrequired.
+     */
+    struct CudaKernelExtraParams {
+        /*!
+         * Dynamic shared-memory size per thread block in bytes.
+         */
         unsigned sharedBytes = 0;
+        /*!
+         * Stream identifier.
+         */
         CUstream hStream = nullptr;
+        /*!
+         * Extra options.
+         */
         void **extra = nullptr;
 
-        static CudaKernelExtraArgs getDefaultInstance() {
+        static CudaKernelExtraParams getDefaultInstance() {
             return {};
         };
     };
 
+    /*!
+     * @class CudaKernel
+     * @brief A cuda kernel, can be launched within the current context with CudaKernel::launch.
+     */
     class CudaKernel {
     private:
         CUfunction kernel = nullptr;
@@ -377,8 +511,15 @@ namespace CudaPlusPlus {
         }
 
     public:
+        /*!
+         * Launches the kernel.
+         * @param grid Number of blocks in grid.
+         * @param block Number of threads to spawn in each block.
+         * @param args Kernel parameters.
+         * @param extraArgs Additional launch parameters, usually unrequired.
+         */
         void launch(CudaDimensions grid, CudaDimensions block, CudaKernelArgs args,
-                    CudaKernelExtraArgs extraArgs = CudaKernelExtraArgs::getDefaultInstance()) {
+                    CudaKernelExtraParams extraArgs = CudaKernelExtraParams::getDefaultInstance()) {
             CudaException::tryCuda(
                     cuLaunchKernel(kernel, grid[0], grid[1], grid[2], block[0], block[1], block[2],
                                    extraArgs.sharedBytes,
@@ -388,6 +529,10 @@ namespace CudaPlusPlus {
         friend class CudaModule;
     };
 
+    /*!
+     * @class CudaModule
+     * @brief Represents a single cuda code module, allows extraction of cuda kernels included in it.
+     */
     class CudaModule {
     private:
         CUmodule module = nullptr;
@@ -397,12 +542,79 @@ namespace CudaPlusPlus {
         }
 
     public:
-        static CudaModule load(const char *modulePath) {
+        /*!
+         * @brief Loads CudaKernel from module.
+         * @param name name of kernel to load.
+         */
+        CudaKernel getKernel(const char *name) {
+            return {name, module};
+        }
+
+        friend class CudaDriver;
+    };
+
+    /*!
+     * @class CudaDriver
+     * @brief Root for all interactions with cuda driver api, represents the driver itself.
+     */
+    class CudaDriver {
+    private:
+        int deviceCount = 0;
+
+        CudaDriver() {
+            CudaException::tryCuda(cuDeviceGetCount(&deviceCount));
+        }
+
+    public:
+        /*!
+         * @brief Returns handle for specified device.
+         * @param deviceNumber number of the device to get.
+         */
+        CudaDevice getDevice(int deviceNumber) {
+            return CudaDevice(deviceNumber);
+        }
+
+        /*!
+         * @brief Returns handle for a cuda device, if more than one is avilable returns random one.
+         */
+        CudaDevice getDevice() {
+            if (deviceCount == 0) {
+                throw CudaException(CUDA_ERROR_NO_DEVICE);
+            }
+            if (deviceCount == 1) {
+                return getDevice(0);
+            }
+            std::default_random_engine generator;
+            std::uniform_int_distribution<int> distribution(0, deviceCount - 1);
+            return getDevice(distribution(generator));
+        }
+
+        /*!
+         * @brief Loads cuda code module.
+         * @param modulePath path to the ptx file.
+         */
+        CudaModule getModule(const char *modulePath) {
             return CudaModule(modulePath);
         }
 
-        CudaKernel getKernel(const char *name) {
-            return {name, module};
+        /*!
+         * @brief CudaDriver factory, initializes Driver API when called the first time.
+         */
+        static CudaDriver getInstance() {
+            static bool isInitialized;
+            if (!isInitialized) {
+                CudaException::tryCuda(cuInit(0));
+                isInitialized = true;
+            }
+            return {};
+        }
+
+        /*!
+         * @brief Returns CudaDriver object WITHOUT initializing Driver API.
+         * @warning Does not initialize Driver API.
+         */
+        static CudaDriver getExistingInstance() {
+            return {};
         }
     };
 }
