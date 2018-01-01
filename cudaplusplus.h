@@ -200,6 +200,12 @@ namespace cudaplusplus {
         }
 
     public:
+        CudaDeviceMemory(CUdeviceptr ptr, int size) {
+            this->ptr = ptr;
+            this->size = size;
+        }
+
+
         void *getRaw() override {
             return &ptr;
         }
@@ -269,23 +275,18 @@ namespace cudaplusplus {
      */
     template<typename T>
     class CudaValue : public CudaMemory {
-        T *ptr;
+        T val;
     public:
         explicit CudaValue(T val) {
-            ptr = new T;
-            *ptr = val;
+            this->val = val;
         }
 
         void *getRaw() override {
-            return ptr;
+            return &val;
         }
 
-        T &operator*() {
-            return ptr;
-        }
-
-        ~CudaValue() {
-            delete ptr;
+        const T &operator*() {
+            return val;
         }
     };
 
@@ -323,7 +324,9 @@ namespace cudaplusplus {
         CUcontext context = nullptr;
         bool preserve = false;
 
-        CudaContext() = default;
+        explicit CudaContext(bool setPreserve = false) {
+            preserve = setPreserve;
+        }
 
         explicit CudaContext(CUdevice device, unsigned flags) {
             CudaException::tryCuda(cuCtxCreate(&context, flags, device));
@@ -407,7 +410,7 @@ namespace cudaplusplus {
          * @warning Does not create a cuda context itself, use with caution.
          */
         static CudaContext getExistingContext() {
-            return {};
+            return CudaContext(true);
         }
 
         friend class CudaDevice;
